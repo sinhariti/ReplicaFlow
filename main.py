@@ -6,12 +6,9 @@ This ensures:
 - fault tolerance
 - leader election
 - log replication
-<<<<<<< HEAD
-=======
 
 * Raft Node Heartbeat : leaders send periodic heartbeats to the followers to maintain authority and prevent new elections
 * Raft Node election timeout: ensures that each node has a separate randomized election timeout to reduces the chances of multiple node elections and split votes
->>>>>>> f226287 (added raft node and state route)
 '''
 from fastapi import FastAPI
 import time
@@ -27,9 +24,6 @@ class RaftNode:
         self.current_term =0
         self.vote_to = None
         self.log = []
-<<<<<<< HEAD
-        self.role = "follower" # follower, candidate, leader
-=======
         self.last_heartbeat = time.time() # how long since leader contacted
         self.election_timeout = random.uniform(8,13) # all nodes should start election
         self.role = "follower" # follower, candidate, leader
@@ -85,7 +79,6 @@ node = [node1, node2, node3]
 async def startup_event():
     for n in node:
         asyncio.create_task(monitor_node(n))
->>>>>>> f226287 (added raft node and state route)
 #storing key-value pairs 
 @app.post("/put")
 def put(data: dict):
@@ -99,14 +92,6 @@ def get(key:str):
 #inspect raft node state
 @app.get("/state")
 def state():
-<<<<<<< HEAD
-    return {
-        "id" : node.node_id,
-        "role" : node.role,
-        "term": node.current_term,
-        "log": len(node.log)
-    }
-=======
     all =[]
     for node_id in node:
       all.append({ 
@@ -116,4 +101,3 @@ def state():
           "log": len(node_id.log)
         })
     return all
->>>>>>> f226287 (added raft node and state route)
