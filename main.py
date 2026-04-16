@@ -39,8 +39,8 @@ class RaftNode:
         self.current_term+=1
         self.vote_to=self.node_id
         self.last_heartbeat=time.time()
-        #only for single node, so directly become leader
-        self.be_leader()
+        asyncio.create_task(self.request_votes())
+
     def send_heartbeats(self):
         print(f"[{self.node_id}] sending heartbeats to followers")
         for n in node:
@@ -61,6 +61,34 @@ class RaftNode:
         self.role="leader"
         if self.leader_worker is None:
             self.leader_worker = asyncio.create_task(self.leader_loop())
+    
+    #give vote 
+    def give_vote(self, current_term, candidate_id):
+        if current_term > self.current_term:
+            self.current_term = current_term
+            self.vote_to= None
+            self.role = "follower"
+        if current_term == self.current_term:
+            if self.vote_to is None:
+                self.vote_to = candidate_id
+                return True
+            if self.vote_to == candidate_id:
+                return True
+
+        return False
+    #add votes 
+    async def request_votes(self):
+        vote = 1
+        for n in node:
+            if n.node_id != self.node_id:
+                if n.give_vote(self.current_term, self.node_id):
+                    vote+=1
+        if vote > len(node)//2:
+            self.be_leader()
+        else:
+            print(f"[{self.node_id}] election failed, retrying...")
+            self.last_heartbeat = 0
+
 
 # check randomly if the leader is active or not 
 async def monitor_node(node):
@@ -101,3 +129,14 @@ def state():
           "log": len(node_id.log)
         })
     return all
+
+
+@app.post("/kill/{node_id}")
+def kill(node_id: str):
+    for n in node:
+        if n.node_id == node_id:
+            n.role = "follower"
+            n.leader_worker = None
+            n.last_heartbeat = 0  
+            print(f"[{node_id}] manually killed leader")
+    return {"status": "killed"}
