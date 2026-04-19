@@ -7,8 +7,8 @@ This ensures:
 - leader election
 - log replication
 
-* Raft Node Heartbeat : leaders send periodic heartbeats to the followers to maintain authority and prevent new elections
-* Raft Node election timeout: ensures that each node has a separate randomized election timeout to reduces the chances of multiple node elections and split votes
+* Raft AppendEnteries : leader sends append entries to followers to replicate log entries and maintain consistency
+
 '''
 from fastapi import FastAPI
 import time
@@ -23,6 +23,7 @@ class RaftNode:
         self.node_id = node_id
         self.current_term =0
         self.vote_to = None
+        self.monitor_task = None
         self.log = []
         self.last_heartbeat = time.time() # how long since leader contacted
         self.election_timeout = random.uniform(8,13) # all nodes should start election
@@ -41,20 +42,30 @@ class RaftNode:
         self.last_heartbeat=time.time()
         asyncio.create_task(self.request_votes())
 
-    def send_heartbeats(self):
-        print(f"[{self.node_id}] sending heartbeats to followers")
+    def append_entries(self):
+        print(f"[{self.node_id}] sending AppendEntries (heartbeat)")
         for n in node:
             if n.node_id != self.node_id:
-                n.last_heartbeat=time.time()
+                n.recieve_append_entries(self.current_term, self.node_id)
+    
+    def recieve_append_entries(self, current_term, leader_id):
+        if current_term>=self.current_term:
+            self.current_term=current_term
+            self.role="follower"
+            self.last_heartbeat=time.time()
+            self.vote_to=None
+            print(f"[{self.node_id}] received heartbeat from {leader_id}")
 
     async def leader_loop(self):
-        while self.role=="leader":
-            print(f"[{self.node_id}] heartbeat (term {self.current_term})")
-            self.send_heartbeats()
-            self.last_heartbeat=time.time()
-            await asyncio.sleep(0.5) # heartbeat interval
-        # reset the leader worker when no longer leader
-        self.leader_worker=None
+        try:
+            while True:
+                print(f"[{self.node_id}] heartbeat (term {self.current_term})")
+                self.append_entries()
+                self.last_heartbeat = time.time()
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            print(f"[{self.node_id}] leader loop stopped")
+            self.leader_worker = None
 
     def be_leader(self):
         print(f"[{self.node_id}] elected as LEADER for term {self.current_term}")
@@ -106,7 +117,7 @@ node = [node1, node2, node3]
 @app.on_event("startup")
 async def startup_event():
     for n in node:
-        asyncio.create_task(monitor_node(n))
+        n.monitor_task = asyncio.create_task(monitor_node(n))
 #storing key-value pairs 
 @app.post("/put")
 def put(data: dict):
@@ -130,13 +141,28 @@ def state():
         })
     return all
 
-
 @app.post("/kill/{node_id}")
 def kill(node_id: str):
     for n in node:
         if n.node_id == node_id:
-            n.role = "follower"
-            n.leader_worker = None
-            n.last_heartbeat = 0  
-            print(f"[{node_id}] manually killed leader")
+
+            # stop election loop
+            if hasattr(n, "monitor_task") and n.monitor_task:
+                n.monitor_task.cancel()
+
+            # stop leader loop
+            if n.leader_worker:
+                n.leader_worker.cancel()
+
+            print(f"[{node_id}] stopped completely")
     return {"status": "killed"}
+@app.post("/restart/{node_id}")
+async def restart_node(node_id: str):
+    for n in node:
+        if n.node_id == node_id:
+            n.monitor_task = asyncio.create_task(monitor_node(n))
+            n.last_heartbeat = time.time()
+            n.vote_to = None
+            n.role = "follower"
+            print(f"[{node_id}] restarted")
+    return {"status": "restarted"}
